@@ -22,8 +22,7 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Always use the DIRECT Supabase connection URL for migrations.
-# The pooler (Transaction mode) does not support the SET commands Alembic uses.
+# Always use the direct nhost PostgreSQL connection URL for migrations.
 settings = get_settings()
 config.set_main_option("sqlalchemy.url", settings.database_url)
 

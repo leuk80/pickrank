@@ -1,5 +1,6 @@
 from collections.abc import AsyncGenerator
 
+from sqlalchemy import pool as sa_pool
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -11,14 +12,20 @@ from app.config import get_settings
 
 settings = get_settings()
 
-# Use the Transaction Pooler URL for app queries (serverless-safe).
-# Falls back to the direct URL if the pooler URL is not configured.
+# In production (Vercel serverless) use NullPool – each request opens and
+# closes its own connection. nhost does not provide a built-in PgBouncer
+# pooler, so NullPool prevents connection exhaustion on serverless.
+# In local development a regular pool is used for better performance.
+_pool_kwargs: dict = (
+    {"poolclass": sa_pool.NullPool}
+    if settings.is_production
+    else {"pool_size": 5, "max_overflow": 10, "pool_pre_ping": True}
+)
+
 engine = create_async_engine(
     settings.active_database_url or "sqlite+aiosqlite:///:memory:",
     echo=settings.debug,
-    pool_size=5,
-    max_overflow=10,
-    pool_pre_ping=True,
+    **_pool_kwargs,
 )
 
 AsyncSessionLocal = async_sessionmaker(

@@ -7,13 +7,13 @@ PickRank is a SaaS platform that automatically analyzes finance podcasts and You
 | Layer | Technology |
 |-------|-----------|
 | Backend | Python 3.12+, FastAPI |
-| Database | PostgreSQL (Supabase) |
+| Database | PostgreSQL (nhost) |
 | Cache | Redis (optional, post-MVP) |
 | Async Jobs | Celery or FastAPI BackgroundTasks |
 | AI/NLP | OpenAI API (classification), spaCy (entity recognition) |
 | Market Data | Polygon.io or Alpha Vantage API |
 | Frontend | Next.js, Tailwind CSS |
-| Hosting | Vercel (Frontend), Supabase or AWS (Backend + DB) |
+| Hosting | Vercel (Frontend + Backend Serverless), nhost (DB) |
 | Email | SendGrid |
 | Monitoring | Sentry (errors), structured logging |
 ---
