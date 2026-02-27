@@ -3,10 +3,11 @@ import type {
   AdminEpisode,
   AdminRecommendation,
   Creator,
+  ExtractResult,
   FetchResult,
   Language,
   Platform,
-  ProcessResult,
+  TranscribeResult,
   PaginatedRecommendations,
   PaginatedResponse,
   RankedCreator,
@@ -125,11 +126,18 @@ export async function adminFetchEpisodes(
   return adminFetch(`/admin/fetch/${creatorId}`, adminKey, { method: "POST" });
 }
 
-export async function adminProcessEpisode(
+export async function adminTranscribeEpisode(
   adminKey: string,
   episodeId: string
-): Promise<ProcessResult> {
-  return adminFetch(`/admin/process/${episodeId}`, adminKey, { method: "POST" });
+): Promise<TranscribeResult> {
+  return adminFetch(`/admin/transcribe/${episodeId}`, adminKey, { method: "POST" });
+}
+
+export async function adminExtractEpisode(
+  adminKey: string,
+  episodeId: string
+): Promise<ExtractResult> {
+  return adminFetch(`/admin/extract/${episodeId}`, adminKey, { method: "POST" });
 }
 
 export async function adminListEpisodes(
