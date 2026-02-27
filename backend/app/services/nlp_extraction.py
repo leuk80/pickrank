@@ -2,11 +2,14 @@
 NLP extraction service – Phase 2 implementation.
 
 Pipeline:
-1. spaCy NER  → finds ORG/GPE entities as candidate company names.
-2. Regex      → finds potential ticker patterns (1–5 uppercase letters).
-3. OpenAI     → receives full transcript + candidate entities, returns
-                structured BUY/HOLD/SELL recommendations with confidence.
-4. Filter     → discard recommendations with confidence ≤ 0.7.
+1. Regex  → finds potential ticker patterns (1–5 uppercase letters) as hints.
+2. OpenAI → receives full transcript + ticker hints, returns structured
+            BUY/HOLD/SELL recommendations with confidence scores.
+3. Filter → discard recommendations with confidence ≤ 0.7.
+
+Note: spaCy was intentionally removed – its heavy dependencies (numpy, thinc,
+blis, …) push the Vercel bundle over the 250 MB limit.  OpenAI gpt-4o-mini
+handles company-name and ticker resolution reliably without NER hints.
 
 Target false-positive rate: < 20%.
 """
@@ -76,49 +79,6 @@ _SYSTEM_PROMPT = textwrap.dedent("""
 """).strip()
 
 
-# ---------------------------------------------------------------------------
-# spaCy helpers
-# ---------------------------------------------------------------------------
-
-_nlp = None  # lazy-loaded to avoid import-time cost on Vercel cold start
-
-
-def _get_nlp() -> Any:
-    """Lazily load the spaCy model (English, medium, with NER)."""
-    global _nlp
-    if _nlp is None:
-        import spacy
-
-        try:
-            _nlp = spacy.load("en_core_web_sm")
-        except OSError:
-            logger.warning(
-                "spaCy model 'en_core_web_sm' not found – "
-                "run: python -m spacy download en_core_web_sm"
-            )
-            _nlp = None
-    return _nlp
-
-
-def _extract_candidate_entities(text: str) -> list[str]:
-    """Return a deduplicated list of ORG entity strings found by spaCy.
-
-    Falls back to an empty list if the model is not installed.
-    """
-    nlp = _get_nlp()
-    if nlp is None:
-        return []
-
-    doc = nlp(text[:50_000])  # limit to first 50k chars to stay within memory
-    seen: set[str] = set()
-    entities: list[str] = []
-    for ent in doc.ents:
-        if ent.label_ in ("ORG", "PRODUCT") and ent.text not in seen:
-            seen.add(ent.text)
-            entities.append(ent.text)
-    return entities
-
-
 def _extract_ticker_candidates(text: str) -> list[str]:
     """Return potential ticker symbols found via regex, filtered for noise."""
     matches = _TICKER_REGEX.findall(text)
@@ -135,7 +95,7 @@ def _extract_ticker_candidates(text: str) -> list[str]:
 # OpenAI extraction
 # ---------------------------------------------------------------------------
 
-async def _call_openai(transcript: str, candidate_entities: list[str]) -> list[dict[str, Any]]:
+async def _call_openai(transcript: str, ticker_hints: list[str]) -> list[dict[str, Any]]:
     """Send the transcript to OpenAI and parse the structured response.
 
     Returns a list of raw recommendation dicts (not yet confidence-filtered).
@@ -153,12 +113,12 @@ async def _call_openai(transcript: str, candidate_entities: list[str]) -> list[d
             _MAX_TRANSCRIPT_CHARS,
         )
 
-    entity_hint = ""
-    if candidate_entities:
-        sample = ", ".join(candidate_entities[:30])
-        entity_hint = f"\n\nCandidate entities detected by NER: {sample}"
+    hint = ""
+    if ticker_hints:
+        sample = ", ".join(ticker_hints[:30])
+        hint = f"\n\nPotential ticker symbols found in transcript: {sample}"
 
-    user_message = f"Extract all stock recommendations from this transcript:{entity_hint}\n\n---\n{truncated}\n---"
+    user_message = f"Extract all stock recommendations from this transcript:{hint}\n\n---\n{truncated}\n---"
 
     try:
         response = await client.chat.completions.create(
@@ -198,12 +158,12 @@ async def extract_recommendations(transcript: str) -> list[dict[str, Any]]:
     if not transcript or not transcript.strip():
         return []
 
-    # 1. Candidate entities via spaCy NER + regex
-    candidate_entities = _extract_candidate_entities(transcript)
-    logger.debug("spaCy ORG entities: %s", candidate_entities[:10])
+    # 1. Regex ticker hints (lightweight, no heavy dependencies)
+    ticker_hints = _extract_ticker_candidates(transcript)
+    logger.debug("Regex ticker candidates: %s", ticker_hints[:10])
 
     # 2. OpenAI classification
-    raw_recs = await _call_openai(transcript, candidate_entities)
+    raw_recs = await _call_openai(transcript, ticker_hints)
     logger.info("OpenAI returned %d raw recommendation(s)", len(raw_recs))
 
     # 3. Validate and filter by confidence threshold

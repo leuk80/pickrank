@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.services.nlp_extraction import (
-    _CONFIDENCE_THRESHOLD,
     _extract_ticker_candidates,
     extract_recommendations,
 )
@@ -70,7 +69,6 @@ async def test_extract_recommendations_returns_high_confidence() -> None:
 
     with (
         patch("app.services.nlp_extraction.AsyncOpenAI", return_value=mock_client),
-        patch("app.services.nlp_extraction._get_nlp", return_value=None),
     ):
         results = await extract_recommendations("Apple is a clear buy at these levels.")
 
@@ -94,7 +92,6 @@ async def test_extract_recommendations_filters_low_confidence() -> None:
 
     with (
         patch("app.services.nlp_extraction.AsyncOpenAI", return_value=mock_client),
-        patch("app.services.nlp_extraction._get_nlp", return_value=None),
     ):
         results = await extract_recommendations("Maybe Tesla. Definitely sell Nvidia.")
 
@@ -110,8 +107,6 @@ async def test_extract_recommendations_empty_transcript_returns_empty() -> None:
 
 @pytest.mark.asyncio
 async def test_extract_recommendations_openai_error_returns_empty() -> None:
-    from openai import APIError
-
     mock_client = AsyncMock()
     mock_client.chat.completions.create = AsyncMock(
         side_effect=Exception("OpenAI API error")
@@ -119,7 +114,6 @@ async def test_extract_recommendations_openai_error_returns_empty() -> None:
 
     with (
         patch("app.services.nlp_extraction.AsyncOpenAI", return_value=mock_client),
-        patch("app.services.nlp_extraction._get_nlp", return_value=None),
     ):
         results = await extract_recommendations("Some transcript text.")
 
@@ -140,7 +134,6 @@ async def test_extract_recommendations_invalid_type_discarded() -> None:
 
     with (
         patch("app.services.nlp_extraction.AsyncOpenAI", return_value=mock_client),
-        patch("app.services.nlp_extraction._get_nlp", return_value=None),
     ):
         results = await extract_recommendations("Strong buy BMW. Buy SAP.")
 
