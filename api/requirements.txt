@@ -5,6 +5,7 @@ mangum==0.17.0
 # Database
 sqlalchemy[asyncio]==2.0.38
 asyncpg==0.30.0
+aiosqlite==0.21.0
 
 # Validation & Settings
 pydantic==2.11.1
@@ -21,5 +22,10 @@ passlib[bcrypt]==1.7.4
 # Monitoring
 sentry-sdk[fastapi]==2.24.1
 
-# Email (stub, Phase 5)
+# Email
 sendgrid==6.11.0
+
+# NLP / AI (Phase 2)
+openai==1.68.2
+feedparser==6.0.11
+youtube-transcript-api==0.6.3
