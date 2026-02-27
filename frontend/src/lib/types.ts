@@ -62,3 +62,52 @@ export interface PaginatedRecommendations extends PaginatedResponse<Recommendati
 export interface RankingResponse extends PaginatedResponse<RankedCreator> {
   minimum_picks_required: number;
 }
+
+// ---------------------------------------------------------------------------
+// Admin (Phase 2 test interface)
+// ---------------------------------------------------------------------------
+
+export interface AdminCreator {
+  id: string;
+  name: string;
+  platform: Platform;
+  language: Language;
+  rss_url: string | null;
+  youtube_channel_id: string | null;
+  episode_count: number;
+  recommendation_count: number;
+  unprocessed_count: number;
+}
+
+export interface FetchResult {
+  creator_id: string;
+  creator_name: string;
+  new_episodes: number;
+  error?: string | null;
+}
+
+export interface ProcessResult {
+  episode_id: string;
+  episode_title: string;
+  recommendations_saved: number;
+  error?: string | null;
+}
+
+export interface AdminEpisode {
+  id: string;
+  title: string;
+  source_url: string | null;
+  publish_date: string | null;
+  processed: boolean;
+  recommendation_count: number;
+}
+
+export interface AdminRecommendation {
+  id: string;
+  ticker: string;
+  company_name: string | null;
+  type: RecommendationType;
+  confidence: number | null;
+  sentence: string | null;
+  recommendation_date: string | null;
+}

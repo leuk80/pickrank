@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     # nhost PostgreSQL connection – used by app and Alembic migrations
     database_url: str = ""
 
+    # Admin API key – protects /api/admin/* endpoints (set in .env)
+    admin_api_key: str = ""
+
     # OpenAI (Phase 2)
     openai_api_key: str = ""
 
