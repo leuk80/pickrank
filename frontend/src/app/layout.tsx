@@ -43,6 +43,9 @@ export default function RootLayout({
               <a href="/recommendations" className="hover:text-brand-600">
                 Empfehlungen
               </a>
+              <a href="/admin" className="hover:text-brand-600 text-gray-400">
+                Admin
+              </a>
             </div>
           </nav>
         </header>

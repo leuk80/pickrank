@@ -5,6 +5,7 @@ import sentry_sdk
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.admin import router as admin_router
 from app.api.creators import router as creators_router
 from app.api.ranking import router as ranking_router
 from app.api.recommendations import router as recommendations_router
@@ -48,6 +49,7 @@ app.add_middleware(
 )
 
 # All routes prefixed with /api
+app.include_router(admin_router, prefix="/api")
 app.include_router(creators_router, prefix="/api")
 app.include_router(recommendations_router, prefix="/api")
 app.include_router(ranking_router, prefix="/api")

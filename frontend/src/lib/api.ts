@@ -1,5 +1,11 @@
 import type {
+  AdminCreator,
+  AdminEpisode,
+  AdminRecommendation,
   Creator,
+  IngestResult,
+  Language,
+  Platform,
   PaginatedRecommendations,
   PaginatedResponse,
   RankedCreator,
@@ -68,4 +74,66 @@ export async function subscribe(
     method: "POST",
     body: JSON.stringify({ email, language }),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Admin API (Phase 2 test interface) – requires X-Admin-Key header
+// ---------------------------------------------------------------------------
+
+function adminFetch<T>(
+  path: string,
+  adminKey: string,
+  options?: RequestInit
+): Promise<T> {
+  return apiFetch<T>(path, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      "X-Admin-Key": adminKey,
+      ...(options?.headers ?? {}),
+    },
+  });
+}
+
+export async function adminListCreators(
+  adminKey: string
+): Promise<AdminCreator[]> {
+  return adminFetch("/admin/creators", adminKey);
+}
+
+export async function adminCreateCreator(
+  adminKey: string,
+  payload: {
+    name: string;
+    platform: Platform;
+    language: Language;
+    rss_url?: string;
+    youtube_channel_id?: string;
+  }
+): Promise<AdminCreator> {
+  return adminFetch("/admin/creators", adminKey, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function adminIngestCreator(
+  adminKey: string,
+  creatorId: string
+): Promise<IngestResult> {
+  return adminFetch(`/admin/ingest/${creatorId}`, adminKey, { method: "POST" });
+}
+
+export async function adminListEpisodes(
+  adminKey: string,
+  creatorId: string
+): Promise<AdminEpisode[]> {
+  return adminFetch(`/admin/episodes/${creatorId}`, adminKey);
+}
+
+export async function adminListRecommendations(
+  adminKey: string,
+  episodeId: string
+): Promise<AdminRecommendation[]> {
+  return adminFetch(`/admin/recommendations/${episodeId}`, adminKey);
 }
