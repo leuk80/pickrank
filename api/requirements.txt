@@ -1,0 +1,25 @@
+# Core FastAPI stack
+fastapi==0.115.6
+mangum==0.17.0
+
+# Database
+sqlalchemy[asyncio]==2.0.38
+asyncpg==0.30.0
+
+# Validation & Settings
+pydantic==2.11.1
+pydantic-settings==2.8.1
+email-validator==2.2.0
+
+# HTTP Client
+httpx==0.28.1
+
+# Auth
+python-jose[cryptography]==3.4.0
+passlib[bcrypt]==1.7.4
+
+# Monitoring
+sentry-sdk[fastapi]==2.24.1
+
+# Email (stub, Phase 5)
+sendgrid==6.11.0
