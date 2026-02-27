@@ -43,6 +43,10 @@ sendgrid==6.11.0
 # ============================================================
 openai==1.68.2
 spacy==3.8.4
+# RSS feed parsing
+feedparser==6.0.11
+# YouTube transcript retrieval (no API key required)
+youtube-transcript-api==0.6.3
 
 # ============================================================
 # Monitoring
