@@ -3,20 +3,22 @@
 import { useState } from "react";
 import {
   adminCreateCreator,
+  adminExtractEpisode,
   adminFetchEpisodes,
   adminListCreators,
   adminListEpisodes,
   adminListRecommendations,
-  adminProcessEpisode,
+  adminTranscribeEpisode,
 } from "@/lib/api";
 import type {
   AdminCreator,
   AdminEpisode,
   AdminRecommendation,
+  ExtractResult,
   FetchResult,
   Language,
   Platform,
-  ProcessResult,
+  TranscribeResult,
 } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -38,7 +40,9 @@ function Badge({
     gray: "bg-gray-100 text-gray-700",
   };
   return (
-    <span className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ${colors[color]}`}>
+    <span
+      className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ${colors[color]}`}
+    >
       {children}
     </span>
   );
@@ -56,6 +60,19 @@ function ErrorBox({ message }: { message: string }) {
       {message}
     </div>
   );
+}
+
+/** Three-state pipeline badge for an episode row */
+function EpisodeStatusBadge({
+  has_transcript,
+  processed,
+}: {
+  has_transcript: boolean;
+  processed: boolean;
+}) {
+  if (processed) return <Badge color="green">Fertig</Badge>;
+  if (has_transcript) return <Badge color="blue">Transkript vorhanden</Badge>;
+  return <Badge color="yellow">Kein Transkript</Badge>;
 }
 
 // ---------------------------------------------------------------------------
@@ -90,9 +107,13 @@ export default function AdminPage() {
   const [episodes, setEpisodes] = useState<AdminEpisode[]>([]);
   const [loadingEpisodes, setLoadingEpisodes] = useState(false);
 
-  // Process (step 2)
-  const [processLoading, setProcessLoading] = useState<string | null>(null);
-  const [processResults, setProcessResults] = useState<Record<string, ProcessResult>>({});
+  // Transcribe (step 2) – keyed by episode id
+  const [transcribeLoading, setTranscribeLoading] = useState<string | null>(null);
+  const [transcribeResults, setTranscribeResults] = useState<Record<string, TranscribeResult>>({});
+
+  // Extract (step 3) – keyed by episode id
+  const [extractLoading, setExtractLoading] = useState<string | null>(null);
+  const [extractResults, setExtractResults] = useState<Record<string, ExtractResult>>({});
 
   // Recommendations
   const [selectedEpisode, setSelectedEpisode] = useState<AdminEpisode | null>(null);
@@ -154,7 +175,6 @@ export default function AdminPage() {
       const result = await adminFetchEpisodes(apiKey, creator.id);
       setFetchResults((prev) => ({ ...prev, [creator.id]: result }));
       await loadCreators();
-      // Auto-load episodes for this creator
       await loadEpisodes(creator);
     } catch (e: unknown) {
       setGlobalError(e instanceof Error ? e.message : String(e));
@@ -177,18 +197,31 @@ export default function AdminPage() {
     }
   }
 
-  async function handleProcess(episode: AdminEpisode) {
-    setProcessLoading(episode.id);
+  async function handleTranscribe(episode: AdminEpisode) {
+    setTranscribeLoading(episode.id);
     setGlobalError("");
     try {
-      const result = await adminProcessEpisode(apiKey, episode.id);
-      setProcessResults((prev) => ({ ...prev, [episode.id]: result }));
-      // Refresh episodes to update processed status
+      const result = await adminTranscribeEpisode(apiKey, episode.id);
+      setTranscribeResults((prev) => ({ ...prev, [episode.id]: result }));
       if (selectedCreator) await loadEpisodes(selectedCreator);
     } catch (e: unknown) {
       setGlobalError(e instanceof Error ? e.message : String(e));
     } finally {
-      setProcessLoading(null);
+      setTranscribeLoading(null);
+    }
+  }
+
+  async function handleExtract(episode: AdminEpisode) {
+    setExtractLoading(episode.id);
+    setGlobalError("");
+    try {
+      const result = await adminExtractEpisode(apiKey, episode.id);
+      setExtractResults((prev) => ({ ...prev, [episode.id]: result }));
+      if (selectedCreator) await loadEpisodes(selectedCreator);
+    } catch (e: unknown) {
+      setGlobalError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setExtractLoading(null);
     }
   }
 
@@ -251,8 +284,10 @@ export default function AdminPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Phase 2 – Test Interface</h1>
           <p className="mt-1 text-sm text-gray-500">
-            Schritt 1: Creator hinzufügen → Episoden holen (Fetch).
-            Schritt 2: Pro Episode auf &quot;Verarbeiten&quot; klicken (Transkript + OpenAI).
+            Pipeline: Creator hinzufügen →{" "}
+            <span className="font-medium text-gray-700">1 Fetch</span> →{" "}
+            <span className="font-medium text-gray-700">2 Transkript</span> →{" "}
+            <span className="font-medium text-gray-700">3 Extrahieren</span> (OpenAI)
           </p>
         </div>
         <button
@@ -267,12 +302,10 @@ export default function AdminPage() {
       {globalError && <ErrorBox message={globalError} />}
 
       {/* ------------------------------------------------------------------ */}
-      {/* Schritt 1a: Creator hinzufügen                                      */}
+      {/* Creator hinzufügen                                                  */}
       {/* ------------------------------------------------------------------ */}
       <section className="rounded-lg border bg-white p-6">
-        <h2 className="mb-4 text-base font-semibold text-gray-800">
-          Creator hinzufügen
-        </h2>
+        <h2 className="mb-4 text-base font-semibold text-gray-800">Creator hinzufügen</h2>
         <form onSubmit={handleCreateCreator} className="space-y-3">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <input
@@ -326,12 +359,12 @@ export default function AdminPage() {
       </section>
 
       {/* ------------------------------------------------------------------ */}
-      {/* Schritt 1b: Creator-Liste + Fetch                                   */}
+      {/* Schritt 1 – Creator-Liste + Fetch                                   */}
       {/* ------------------------------------------------------------------ */}
       <section className="rounded-lg border bg-white">
         <div className="border-b px-6 py-4">
           <h2 className="text-base font-semibold text-gray-800">
-            Creator ({creators.length})
+            Schritt 1 – Episoden holen ({creators.length} Creator)
           </h2>
         </div>
         {creators.length === 0 ? (
@@ -347,7 +380,7 @@ export default function AdminPage() {
                   <th className="px-4 py-3">Platform</th>
                   <th className="px-4 py-3 text-right">Episoden</th>
                   <th className="px-4 py-3 text-right">Recs</th>
-                  <th className="px-4 py-3 text-right">Neu</th>
+                  <th className="px-4 py-3 text-right">Ausstehend</th>
                   <th className="px-4 py-3"></th>
                 </tr>
               </thead>
@@ -366,7 +399,7 @@ export default function AdminPage() {
                       <td className="px-4 py-3 text-right text-gray-700">{c.recommendation_count}</td>
                       <td className="px-4 py-3 text-right">
                         {c.unprocessed_count > 0 ? (
-                          <Badge color="yellow">{c.unprocessed_count} unverarbeitet</Badge>
+                          <Badge color="yellow">{c.unprocessed_count}</Badge>
                         ) : (
                           <span className="text-gray-400">–</span>
                         )}
@@ -388,7 +421,9 @@ export default function AdminPage() {
                           </button>
                         </div>
                         {fr && (
-                          <p className={`mt-1 text-right text-xs ${fr.error ? "text-red-500" : "text-gray-500"}`}>
+                          <p
+                            className={`mt-1 text-right text-xs ${fr.error ? "text-red-500" : "text-gray-500"}`}
+                          >
                             {fr.error ? fr.error : `+${fr.new_episodes} neue Episoden`}
                           </p>
                         )}
@@ -403,23 +438,34 @@ export default function AdminPage() {
       </section>
 
       {/* ------------------------------------------------------------------ */}
-      {/* Schritt 2: Episoden + pro Episode verarbeiten                       */}
+      {/* Schritte 2 + 3 – Episoden-Liste                                    */}
       {/* ------------------------------------------------------------------ */}
       {selectedCreator && (
         <section className="rounded-lg border bg-white">
           <div className="border-b px-6 py-4">
             <h2 className="text-base font-semibold text-gray-800">
-              Episoden – {selectedCreator.name}
+              Schritte 2 + 3 – {selectedCreator.name}
             </h2>
-            <p className="mt-0.5 text-xs text-gray-500">
-              Klicke &quot;Verarbeiten&quot; um Transkript + OpenAI für eine Episode zu starten (~15–40 s).
-            </p>
+            <div className="mt-1 flex flex-wrap gap-4 text-xs text-gray-500">
+              <span>
+                <Badge color="yellow">Kein Transkript</Badge>
+                {" → Schritt 2: Transkript holen"}
+              </span>
+              <span>
+                <Badge color="blue">Transkript vorhanden</Badge>
+                {" → Schritt 3: OpenAI Extrahieren"}
+              </span>
+              <span>
+                <Badge color="green">Fertig</Badge>
+                {" → Recommendations verfügbar"}
+              </span>
+            </div>
           </div>
           {loadingEpisodes ? (
             <p className="px-6 py-8 text-center text-sm text-gray-400">Lädt…</p>
           ) : episodes.length === 0 ? (
             <p className="px-6 py-8 text-center text-sm text-gray-400">
-              Keine Episoden. Starte &quot;Fetch&quot; für diesen Creator.
+              Keine Episoden. Starte erst &quot;Fetch&quot; für diesen Creator.
             </p>
           ) : (
             <div className="overflow-x-auto">
@@ -435,7 +481,11 @@ export default function AdminPage() {
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {episodes.map((ep) => {
-                    const pr = processResults[ep.id];
+                    const tr = transcribeResults[ep.id];
+                    const er = extractResults[ep.id];
+                    const isTranscribing = transcribeLoading === ep.id;
+                    const isExtracting = extractLoading === ep.id;
+
                     return (
                       <tr key={ep.id} className="hover:bg-gray-50">
                         <td className="max-w-xs truncate px-4 py-3 font-medium text-gray-900">
@@ -443,14 +493,13 @@ export default function AdminPage() {
                         </td>
                         <td className="px-4 py-3 text-gray-500">{ep.publish_date ?? "–"}</td>
                         <td className="px-4 py-3">
-                          {ep.processed ? (
-                            <Badge color="green">Verarbeitet</Badge>
-                          ) : (
-                            <Badge color="yellow">Ausstehend</Badge>
-                          )}
+                          <EpisodeStatusBadge
+                            has_transcript={ep.has_transcript}
+                            processed={ep.processed}
+                          />
                         </td>
                         <td className="px-4 py-3 text-right text-gray-700">
-                          {ep.recommendation_count}
+                          {ep.recommendation_count > 0 ? ep.recommendation_count : "–"}
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-end gap-2">
@@ -462,19 +511,42 @@ export default function AdminPage() {
                                 Anzeigen
                               </button>
                             )}
-                            {!ep.processed && (
+                            {/* Schritt 2: Transkript holen */}
+                            {!ep.has_transcript && !ep.processed && (
                               <button
-                                onClick={() => handleProcess(ep)}
-                                disabled={processLoading === ep.id}
+                                onClick={() => handleTranscribe(ep)}
+                                disabled={isTranscribing}
+                                className="rounded bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+                              >
+                                {isTranscribing ? "Läuft…" : "Transkript"}
+                              </button>
+                            )}
+                            {/* Schritt 3: Extrahieren */}
+                            {ep.has_transcript && !ep.processed && (
+                              <button
+                                onClick={() => handleExtract(ep)}
+                                disabled={isExtracting}
                                 className="rounded bg-brand-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-brand-500 disabled:opacity-50"
                               >
-                                {processLoading === ep.id ? "Läuft…" : "Verarbeiten"}
+                                {isExtracting ? "Läuft…" : "Extrahieren"}
                               </button>
                             )}
                           </div>
-                          {pr && (
-                            <p className={`mt-1 text-right text-xs ${pr.error ? "text-red-500" : "text-gray-500"}`}>
-                              {pr.error ? pr.error : `+${pr.recommendations_saved} Recs gespeichert`}
+                          {/* Inline result feedback */}
+                          {tr && (
+                            <p
+                              className={`mt-1 text-right text-xs ${tr.error ? "text-red-500" : "text-gray-500"}`}
+                            >
+                              {tr.error
+                                ? tr.error
+                                : `Transkript: ${tr.transcript_length.toLocaleString()} Zeichen`}
+                            </p>
+                          )}
+                          {er && (
+                            <p
+                              className={`mt-0.5 text-right text-xs ${er.error ? "text-red-500" : "text-gray-500"}`}
+                            >
+                              {er.error ? er.error : `+${er.recommendations_saved} Recs gespeichert`}
                             </p>
                           )}
                         </td>

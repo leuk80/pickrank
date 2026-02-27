@@ -86,7 +86,14 @@ export interface FetchResult {
   error?: string | null;
 }
 
-export interface ProcessResult {
+export interface TranscribeResult {
+  episode_id: string;
+  episode_title: string;
+  transcript_length: number;
+  error?: string | null;
+}
+
+export interface ExtractResult {
   episode_id: string;
   episode_title: string;
   recommendations_saved: number;
@@ -98,6 +105,7 @@ export interface AdminEpisode {
   title: string;
   source_url: string | null;
   publish_date: string | null;
+  has_transcript: boolean;
   processed: boolean;
   recommendation_count: number;
 }

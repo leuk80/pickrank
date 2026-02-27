@@ -12,18 +12,21 @@ from app.config import get_settings
 
 settings = get_settings()
 
-# In production (Vercel serverless) use NullPool – each request opens and
-# closes its own connection. nhost does not provide a built-in PgBouncer
-# pooler, so NullPool prevents connection exhaustion on serverless.
-# In local development a regular pool is used for better performance.
-_pool_kwargs: dict = (
-    {"poolclass": sa_pool.NullPool}
-    if settings.is_production
-    else {"pool_size": 5, "max_overflow": 10, "pool_pre_ping": True}
-)
+_db_url = settings.active_database_url or "sqlite+aiosqlite:///:memory:"
+
+# NullPool for PostgreSQL/asyncpg: each serverless invocation opens its own
+# connection and closes it immediately.  No connection leaks on Vercel.
+# StaticPool for SQLite in-memory (local dev without a DB configured).
+if _db_url.startswith("sqlite"):
+    _pool_kwargs: dict = {
+        "poolclass": sa_pool.StaticPool,
+        "connect_args": {"check_same_thread": False},
+    }
+else:
+    _pool_kwargs = {"poolclass": sa_pool.NullPool}
 
 engine = create_async_engine(
-    settings.active_database_url or "sqlite+aiosqlite:///:memory:",
+    _db_url,
     echo=settings.debug,
     **_pool_kwargs,
 )
