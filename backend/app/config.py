@@ -17,11 +17,8 @@ class Settings(BaseSettings):
     secret_key: str = "change-me"
     allowed_origins: str = "http://localhost:3000"
 
-    # Supabase direct connection – used by Alembic migrations only
+    # nhost PostgreSQL connection – used by app and Alembic migrations
     database_url: str = ""
-
-    # Supabase Transaction Pooler – used by the app / Vercel serverless
-    database_pool_url: str = ""
 
     # OpenAI (Phase 2)
     openai_api_key: str = ""
@@ -50,8 +47,7 @@ class Settings(BaseSettings):
 
     @property
     def active_database_url(self) -> str:
-        """Return the pooler URL for the app; fall back to direct URL."""
-        return self.database_pool_url or self.database_url
+        return self.database_url
 
 
 @lru_cache
