@@ -95,6 +95,33 @@ def _extract_ticker_candidates(text: str) -> list[str]:
 # OpenAI extraction
 # ---------------------------------------------------------------------------
 
+def _mock_recommendations(transcript: str) -> list[dict[str, Any]]:
+    """Return deterministic stub data without calling OpenAI.
+
+    Activated when the environment variable OPENAI_MOCK=true is set.
+    Returns two fake recommendations so the full DB-write path can be tested.
+    """
+    # Pick a word from the transcript to make the stub feel dynamic
+    words = [w for w in transcript.split() if w.isupper() and 2 <= len(w) <= 5]
+    ticker = words[0] if words else "TEST"
+    return [
+        {
+            "ticker": ticker,
+            "company_name": f"{ticker} Corp. (mock)",
+            "type": "BUY",
+            "confidence": 0.99,
+            "sentence": f"[MOCK] Extracted from transcript — OpenAI is disabled (OPENAI_MOCK=true).",
+        },
+        {
+            "ticker": "MOCK",
+            "company_name": "Mock Holdings AG",
+            "type": "HOLD",
+            "confidence": 0.85,
+            "sentence": "[MOCK] Second stub recommendation for pipeline testing.",
+        },
+    ]
+
+
 async def _call_openai(transcript: str, ticker_hints: list[str]) -> list[dict[str, Any]]:
     """Send the transcript to OpenAI and parse the structured response.
 
@@ -154,7 +181,11 @@ async def extract_recommendations(transcript: str) -> list[dict[str, Any]]:
         ticker, company_name, type, confidence, sentence
 
     Recommendations with confidence ≤ 0.7 are discarded.
+
+    Set OPENAI_MOCK=true to skip the OpenAI call and return stub data instead.
     """
+    import os
+
     if not transcript or not transcript.strip():
         return []
 
@@ -162,8 +193,12 @@ async def extract_recommendations(transcript: str) -> list[dict[str, Any]]:
     ticker_hints = _extract_ticker_candidates(transcript)
     logger.debug("Regex ticker candidates: %s", ticker_hints[:10])
 
-    # 2. OpenAI classification
-    raw_recs = await _call_openai(transcript, ticker_hints)
+    # 2. OpenAI classification (or mock stub)
+    if os.getenv("OPENAI_MOCK", "").lower() in ("1", "true", "yes"):
+        logger.warning("OPENAI_MOCK is enabled – returning stub recommendations, no API call made.")
+        raw_recs = _mock_recommendations(transcript)
+    else:
+        raw_recs = await _call_openai(transcript, ticker_hints)
     logger.info("OpenAI returned %d raw recommendation(s)", len(raw_recs))
 
     # 3. Validate and filter by confidence threshold
