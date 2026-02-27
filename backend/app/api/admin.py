@@ -1,11 +1,14 @@
 """
 Admin API – Phase 2 test interface endpoints.
-Protected by X-Admin-Key header (set ADMIN_API_KEY in .env).
+Protected by X-Admin-Key header (set ADMIN_API_KEY in .env / Vercel env vars).
+
+Designed for Vercel serverless: each endpoint completes well within 60 s.
 
 Endpoints:
   POST   /api/admin/creators                     – create a creator
   GET    /api/admin/creators                     – list creators with counts
-  POST   /api/admin/ingest/{creator_id}          – ingest + process one creator
+  POST   /api/admin/fetch/{creator_id}           – fetch episode metadata only (fast, < 5 s)
+  POST   /api/admin/process/{episode_id}         – transcript + NLP for ONE episode (< 60 s)
   GET    /api/admin/episodes/{creator_id}        – list episodes for a creator
   GET    /api/admin/recommendations/{episode_id} – list recs for an episode
 """
@@ -25,8 +28,8 @@ from app.database import get_db
 from app.models.creator import Creator
 from app.models.episode import Episode
 from app.models.recommendation import Recommendation
-from app.tasks.cron import process_episode
 from app.services.ingestion import ingest_episodes_for_creator
+from app.tasks.cron import process_episode
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -42,7 +45,7 @@ def require_admin(x_admin_key: str | None = Header(None, alias="X-Admin-Key")) -
 
 
 # ---------------------------------------------------------------------------
-# Pydantic schemas (admin-only, kept local to this module)
+# Pydantic schemas
 # ---------------------------------------------------------------------------
 
 class CreatorCreateRequest(BaseModel):
@@ -67,12 +70,18 @@ class AdminCreatorRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class IngestResult(BaseModel):
+class FetchResult(BaseModel):
     creator_id: uuid.UUID
     creator_name: str
     new_episodes: int
+    error: str | None = None
+
+
+class ProcessResult(BaseModel):
+    episode_id: uuid.UUID
+    episode_title: str
     recommendations_saved: int
-    errors: list[str] = []
+    error: str | None = None
 
 
 class AdminEpisodeRead(BaseModel):
@@ -152,25 +161,26 @@ async def list_creators(
 
     output: list[AdminCreatorRead] = []
     for c in creators:
-        ep_count_row = await db.execute(
-            select(func.count()).where(Episode.creator_id == c.id)
-        )
-        ep_count: int = ep_count_row.scalar_one()
+        ep_count: int = (
+            await db.execute(select(func.count()).where(Episode.creator_id == c.id))
+        ).scalar_one()
 
-        unprocessed_row = await db.execute(
-            select(func.count()).where(
-                Episode.creator_id == c.id,
-                Episode.processed.is_(False),
+        unprocessed: int = (
+            await db.execute(
+                select(func.count()).where(
+                    Episode.creator_id == c.id,
+                    Episode.processed.is_(False),
+                )
             )
-        )
-        unprocessed: int = unprocessed_row.scalar_one()
+        ).scalar_one()
 
-        rec_count_row = await db.execute(
-            select(func.count(Recommendation.id))
-            .join(Episode, Recommendation.episode_id == Episode.id)
-            .where(Episode.creator_id == c.id)
-        )
-        rec_count: int = rec_count_row.scalar_one()
+        rec_count: int = (
+            await db.execute(
+                select(func.count(Recommendation.id))
+                .join(Episode, Recommendation.episode_id == Episode.id)
+                .where(Episode.creator_id == c.id)
+            )
+        ).scalar_one()
 
         output.append(AdminCreatorRead(
             id=c.id,
@@ -188,59 +198,83 @@ async def list_creators(
 
 
 @router.post(
-    "/ingest/{creator_id}",
-    response_model=IngestResult,
+    "/fetch/{creator_id}",
+    response_model=FetchResult,
     dependencies=[Depends(require_admin)],
 )
-async def ingest_creator(
+async def fetch_episodes(
     creator_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-) -> IngestResult:
-    """Fetch new episodes and run NLP extraction for one creator."""
+) -> FetchResult:
+    """Fetch episode metadata from YouTube/RSS and save to DB.
+
+    Fast endpoint (< 5 s): only retrieves titles, dates, URLs — no transcripts,
+    no OpenAI.  Safe to call on Vercel free plan.
+    """
     settings = get_settings()
 
     creator = await db.get(Creator, creator_id)
     if creator is None:
         raise HTTPException(status_code=404, detail="Creator not found")
 
-    errors: list[str] = []
-
-    # 1. Fetch new episodes
     try:
         new_episodes = await ingest_episodes_for_creator(
             creator, db, youtube_api_key=settings.youtube_api_key
         )
-    except Exception as exc:
-        errors.append(f"Ingestion failed: {exc}")
-        new_episodes = []
-
-    # 2. Process all unprocessed episodes (including newly fetched ones)
-    unprocessed_result = await db.execute(
-        select(Episode).where(
-            Episode.creator_id == creator_id,
-            Episode.processed.is_(False),
+        await db.commit()
+        return FetchResult(
+            creator_id=creator_id,
+            creator_name=creator.name,
+            new_episodes=len(new_episodes),
         )
-    )
-    unprocessed = list(unprocessed_result.scalars().all())
-    for ep in unprocessed:
-        ep.creator = creator  # attach for language detection
+    except Exception as exc:
+        return FetchResult(
+            creator_id=creator_id,
+            creator_name=creator.name,
+            new_episodes=0,
+            error=str(exc),
+        )
 
-    recs_saved = 0
-    for episode in unprocessed:
-        try:
-            recs_saved += await process_episode(episode, db)
-        except Exception as exc:
-            errors.append(f"Episode '{episode.title[:60]}': {exc}")
 
-    await db.commit()
+@router.post(
+    "/process/{episode_id}",
+    response_model=ProcessResult,
+    dependencies=[Depends(require_admin)],
+)
+async def process_one_episode(
+    episode_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> ProcessResult:
+    """Transcribe and run NLP extraction for a single episode.
 
-    return IngestResult(
-        creator_id=creator_id,
-        creator_name=creator.name,
-        new_episodes=len(new_episodes),
-        recommendations_saved=recs_saved,
-        errors=errors,
-    )
+    Slow endpoint (~10–40 s): calls youtube-transcript-api + OpenAI.
+    Processes exactly one episode — call once per episode from the frontend.
+    Requires Vercel Pro plan (maxDuration: 60) or run locally.
+    """
+    episode = await db.get(Episode, episode_id)
+    if episode is None:
+        raise HTTPException(status_code=404, detail="Episode not found")
+
+    # Load creator for language detection
+    creator = await db.get(Creator, episode.creator_id)
+    if creator:
+        episode.creator = creator
+
+    try:
+        recs_saved = await process_episode(episode, db)
+        await db.commit()
+        return ProcessResult(
+            episode_id=episode_id,
+            episode_title=episode.title,
+            recommendations_saved=recs_saved,
+        )
+    except Exception as exc:
+        return ProcessResult(
+            episode_id=episode_id,
+            episode_title=episode.title,
+            recommendations_saved=0,
+            error=str(exc),
+        )
 
 
 @router.get(
@@ -262,10 +296,12 @@ async def list_episodes(
 
     output: list[AdminEpisodeRead] = []
     for ep in episodes:
-        rec_count_row = await db.execute(
-            select(func.count()).where(Recommendation.episode_id == ep.id)
-        )
-        rec_count: int = rec_count_row.scalar_one()
+        rec_count: int = (
+            await db.execute(
+                select(func.count()).where(Recommendation.episode_id == ep.id)
+            )
+        ).scalar_one()
+
         output.append(AdminEpisodeRead(
             id=ep.id,
             title=ep.title,

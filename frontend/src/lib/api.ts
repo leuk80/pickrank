@@ -3,9 +3,10 @@ import type {
   AdminEpisode,
   AdminRecommendation,
   Creator,
-  IngestResult,
+  FetchResult,
   Language,
   Platform,
+  ProcessResult,
   PaginatedRecommendations,
   PaginatedResponse,
   RankedCreator,
@@ -117,11 +118,18 @@ export async function adminCreateCreator(
   });
 }
 
-export async function adminIngestCreator(
+export async function adminFetchEpisodes(
   adminKey: string,
   creatorId: string
-): Promise<IngestResult> {
-  return adminFetch(`/admin/ingest/${creatorId}`, adminKey, { method: "POST" });
+): Promise<FetchResult> {
+  return adminFetch(`/admin/fetch/${creatorId}`, adminKey, { method: "POST" });
+}
+
+export async function adminProcessEpisode(
+  adminKey: string,
+  episodeId: string
+): Promise<ProcessResult> {
+  return adminFetch(`/admin/process/${episodeId}`, adminKey, { method: "POST" });
 }
 
 export async function adminListEpisodes(

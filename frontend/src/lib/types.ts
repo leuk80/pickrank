@@ -79,12 +79,18 @@ export interface AdminCreator {
   unprocessed_count: number;
 }
 
-export interface IngestResult {
+export interface FetchResult {
   creator_id: string;
   creator_name: string;
   new_episodes: number;
+  error?: string | null;
+}
+
+export interface ProcessResult {
+  episode_id: string;
+  episode_title: string;
   recommendations_saved: number;
-  errors: string[];
+  error?: string | null;
 }
 
 export interface AdminEpisode {

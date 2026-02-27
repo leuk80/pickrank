@@ -3,22 +3,24 @@
 import { useState } from "react";
 import {
   adminCreateCreator,
-  adminIngestCreator,
+  adminFetchEpisodes,
   adminListCreators,
   adminListEpisodes,
   adminListRecommendations,
+  adminProcessEpisode,
 } from "@/lib/api";
 import type {
   AdminCreator,
   AdminEpisode,
   AdminRecommendation,
-  IngestResult,
+  FetchResult,
   Language,
   Platform,
+  ProcessResult,
 } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
-// Small UI primitives
+// UI helpers
 // ---------------------------------------------------------------------------
 
 function Badge({
@@ -36,9 +38,7 @@ function Badge({
     gray: "bg-gray-100 text-gray-700",
   };
   return (
-    <span
-      className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ${colors[color]}`}
-    >
+    <span className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ${colors[color]}`}>
       {children}
     </span>
   );
@@ -50,8 +50,16 @@ function typeBadge(type: string) {
   return <Badge color="yellow">HOLD</Badge>;
 }
 
+function ErrorBox({ message }: { message: string }) {
+  return (
+    <div className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+      {message}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
-// Main page
+// Page
 // ---------------------------------------------------------------------------
 
 export default function AdminPage() {
@@ -60,8 +68,9 @@ export default function AdminPage() {
 
   const [creators, setCreators] = useState<AdminCreator[]>([]);
   const [loadingCreators, setLoadingCreators] = useState(false);
+  const [globalError, setGlobalError] = useState("");
 
-  // New creator form
+  // Creator form
   const [form, setForm] = useState({
     name: "",
     platform: "youtube" as Platform,
@@ -72,21 +81,23 @@ export default function AdminPage() {
   const [formError, setFormError] = useState("");
   const [formLoading, setFormLoading] = useState(false);
 
-  // Ingestion
-  const [ingestLoading, setIngestLoading] = useState<string | null>(null);
-  const [ingestResults, setIngestResults] = useState<Record<string, IngestResult>>({});
+  // Fetch (step 1)
+  const [fetchLoading, setFetchLoading] = useState<string | null>(null);
+  const [fetchResults, setFetchResults] = useState<Record<string, FetchResult>>({});
 
   // Episodes
   const [selectedCreator, setSelectedCreator] = useState<AdminCreator | null>(null);
   const [episodes, setEpisodes] = useState<AdminEpisode[]>([]);
   const [loadingEpisodes, setLoadingEpisodes] = useState(false);
 
+  // Process (step 2)
+  const [processLoading, setProcessLoading] = useState<string | null>(null);
+  const [processResults, setProcessResults] = useState<Record<string, ProcessResult>>({});
+
   // Recommendations
   const [selectedEpisode, setSelectedEpisode] = useState<AdminEpisode | null>(null);
   const [recommendations, setRecommendations] = useState<AdminRecommendation[]>([]);
   const [loadingRecs, setLoadingRecs] = useState(false);
-
-  const [globalError, setGlobalError] = useState("");
 
   // ---------------------------------------------------------------------------
 
@@ -94,8 +105,7 @@ export default function AdminPage() {
     setLoadingCreators(true);
     setGlobalError("");
     try {
-      const data = await adminListCreators(apiKey);
-      setCreators(data);
+      setCreators(await adminListCreators(apiKey));
     } catch (e: unknown) {
       setGlobalError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -114,12 +124,10 @@ export default function AdminPage() {
     setFormError("");
     if (!form.name.trim()) { setFormError("Name ist erforderlich"); return; }
     if (form.platform === "youtube" && !form.youtube_channel_id.trim()) {
-      setFormError("YouTube Channel ID ist erforderlich");
-      return;
+      setFormError("YouTube Channel ID ist erforderlich"); return;
     }
     if (form.platform === "podcast" && !form.rss_url.trim()) {
-      setFormError("RSS URL ist erforderlich");
-      return;
+      setFormError("RSS URL ist erforderlich"); return;
     }
     setFormLoading(true);
     try {
@@ -139,28 +147,29 @@ export default function AdminPage() {
     }
   }
 
-  async function handleIngest(creator: AdminCreator) {
-    setIngestLoading(creator.id);
+  async function handleFetch(creator: AdminCreator) {
+    setFetchLoading(creator.id);
     setGlobalError("");
     try {
-      const result = await adminIngestCreator(apiKey, creator.id);
-      setIngestResults((prev) => ({ ...prev, [creator.id]: result }));
+      const result = await adminFetchEpisodes(apiKey, creator.id);
+      setFetchResults((prev) => ({ ...prev, [creator.id]: result }));
       await loadCreators();
+      // Auto-load episodes for this creator
+      await loadEpisodes(creator);
     } catch (e: unknown) {
       setGlobalError(e instanceof Error ? e.message : String(e));
     } finally {
-      setIngestLoading(null);
+      setFetchLoading(null);
     }
   }
 
-  async function handleShowEpisodes(creator: AdminCreator) {
+  async function loadEpisodes(creator: AdminCreator) {
     setSelectedCreator(creator);
     setSelectedEpisode(null);
     setRecommendations([]);
     setLoadingEpisodes(true);
     try {
-      const data = await adminListEpisodes(apiKey, creator.id);
-      setEpisodes(data);
+      setEpisodes(await adminListEpisodes(apiKey, creator.id));
     } catch (e: unknown) {
       setGlobalError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -168,12 +177,26 @@ export default function AdminPage() {
     }
   }
 
+  async function handleProcess(episode: AdminEpisode) {
+    setProcessLoading(episode.id);
+    setGlobalError("");
+    try {
+      const result = await adminProcessEpisode(apiKey, episode.id);
+      setProcessResults((prev) => ({ ...prev, [episode.id]: result }));
+      // Refresh episodes to update processed status
+      if (selectedCreator) await loadEpisodes(selectedCreator);
+    } catch (e: unknown) {
+      setGlobalError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setProcessLoading(null);
+    }
+  }
+
   async function handleShowRecommendations(episode: AdminEpisode) {
     setSelectedEpisode(episode);
     setLoadingRecs(true);
     try {
-      const data = await adminListRecommendations(apiKey, episode.id);
-      setRecommendations(data);
+      setRecommendations(await adminListRecommendations(apiKey, episode.id));
     } catch (e: unknown) {
       setGlobalError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -182,15 +205,17 @@ export default function AdminPage() {
   }
 
   // ---------------------------------------------------------------------------
-  // Render
+  // Login screen
   // ---------------------------------------------------------------------------
 
   if (!keyConfirmed) {
     return (
       <div className="mx-auto max-w-sm pt-24">
-        <h1 className="mb-6 text-2xl font-bold text-gray-900">
-          Phase 2 – Test Interface
-        </h1>
+        <h1 className="mb-2 text-2xl font-bold text-gray-900">Phase 2 – Test Interface</h1>
+        <p className="mb-6 text-sm text-gray-500">
+          Admin API Key aus Vercel → Settings → Environment Variables →{" "}
+          <code className="rounded bg-gray-100 px-1">ADMIN_API_KEY</code>
+        </p>
         <div className="rounded-lg border bg-white p-6 shadow-sm">
           <label className="mb-1 block text-sm font-medium text-gray-700">
             Admin API Key
@@ -200,7 +225,7 @@ export default function AdminPage() {
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && confirmKey()}
-            placeholder="Aus .env → ADMIN_API_KEY"
+            placeholder="••••••••"
             className="mb-4 w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
           />
           <button
@@ -214,12 +239,22 @@ export default function AdminPage() {
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // Main interface
+  // ---------------------------------------------------------------------------
+
   return (
     <div className="space-y-8">
+
+      {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">
-          Phase 2 – Test Interface
-        </h1>
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Phase 2 – Test Interface</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            Schritt 1: Creator hinzufügen → Episoden holen (Fetch).
+            Schritt 2: Pro Episode auf &quot;Verarbeiten&quot; klicken (Transkript + OpenAI).
+          </p>
+        </div>
         <button
           onClick={loadCreators}
           disabled={loadingCreators}
@@ -229,17 +264,13 @@ export default function AdminPage() {
         </button>
       </div>
 
-      {globalError && (
-        <div className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {globalError}
-        </div>
-      )}
+      {globalError && <ErrorBox message={globalError} />}
 
       {/* ------------------------------------------------------------------ */}
-      {/* Creator hinzufügen                                                  */}
+      {/* Schritt 1a: Creator hinzufügen                                      */}
       {/* ------------------------------------------------------------------ */}
       <section className="rounded-lg border bg-white p-6">
-        <h2 className="mb-4 text-lg font-semibold text-gray-800">
+        <h2 className="mb-4 text-base font-semibold text-gray-800">
           Creator hinzufügen
         </h2>
         <form onSubmit={handleCreateCreator} className="space-y-3">
@@ -253,9 +284,7 @@ export default function AdminPage() {
             />
             <select
               value={form.platform}
-              onChange={(e) =>
-                setForm({ ...form, platform: e.target.value as Platform })
-              }
+              onChange={(e) => setForm({ ...form, platform: e.target.value as Platform })}
               className="rounded border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
             >
               <option value="youtube">YouTube</option>
@@ -263,9 +292,7 @@ export default function AdminPage() {
             </select>
             <select
               value={form.language}
-              onChange={(e) =>
-                setForm({ ...form, language: e.target.value as Language })
-              }
+              onChange={(e) => setForm({ ...form, language: e.target.value as Language })}
               className="rounded border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
             >
               <option value="de">Deutsch</option>
@@ -275,9 +302,7 @@ export default function AdminPage() {
           {form.platform === "youtube" ? (
             <input
               value={form.youtube_channel_id}
-              onChange={(e) =>
-                setForm({ ...form, youtube_channel_id: e.target.value })
-              }
+              onChange={(e) => setForm({ ...form, youtube_channel_id: e.target.value })}
               placeholder="YouTube Channel ID (z.B. UCxxxxxx)"
               className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
             />
@@ -285,13 +310,11 @@ export default function AdminPage() {
             <input
               value={form.rss_url}
               onChange={(e) => setForm({ ...form, rss_url: e.target.value })}
-              placeholder="RSS Feed URL (z.B. https://example.com/feed.xml)"
+              placeholder="RSS Feed URL"
               className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
             />
           )}
-          {formError && (
-            <p className="text-sm text-red-600">{formError}</p>
-          )}
+          {formError && <p className="text-sm text-red-600">{formError}</p>}
           <button
             type="submit"
             disabled={formLoading}
@@ -303,11 +326,11 @@ export default function AdminPage() {
       </section>
 
       {/* ------------------------------------------------------------------ */}
-      {/* Creator-Liste                                                        */}
+      {/* Schritt 1b: Creator-Liste + Fetch                                   */}
       {/* ------------------------------------------------------------------ */}
       <section className="rounded-lg border bg-white">
         <div className="border-b px-6 py-4">
-          <h2 className="text-lg font-semibold text-gray-800">
+          <h2 className="text-base font-semibold text-gray-800">
             Creator ({creators.length})
           </h2>
         </div>
@@ -322,36 +345,28 @@ export default function AdminPage() {
                 <tr>
                   <th className="px-4 py-3">Name</th>
                   <th className="px-4 py-3">Platform</th>
-                  <th className="px-4 py-3">Sprache</th>
                   <th className="px-4 py-3 text-right">Episoden</th>
                   <th className="px-4 py-3 text-right">Recs</th>
-                  <th className="px-4 py-3 text-right">Unverarbeitet</th>
+                  <th className="px-4 py-3 text-right">Neu</th>
                   <th className="px-4 py-3"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {creators.map((c) => {
-                  const result = ingestResults[c.id];
+                  const fr = fetchResults[c.id];
                   return (
                     <tr key={c.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3 font-medium text-gray-900">
-                        {c.name}
-                      </td>
+                      <td className="px-4 py-3 font-medium text-gray-900">{c.name}</td>
                       <td className="px-4 py-3">
                         <Badge color={c.platform === "youtube" ? "red" : "blue"}>
                           {c.platform}
                         </Badge>
                       </td>
-                      <td className="px-4 py-3 text-gray-500">{c.language}</td>
-                      <td className="px-4 py-3 text-right text-gray-700">
-                        {c.episode_count}
-                      </td>
-                      <td className="px-4 py-3 text-right text-gray-700">
-                        {c.recommendation_count}
-                      </td>
+                      <td className="px-4 py-3 text-right text-gray-700">{c.episode_count}</td>
+                      <td className="px-4 py-3 text-right text-gray-700">{c.recommendation_count}</td>
                       <td className="px-4 py-3 text-right">
                         {c.unprocessed_count > 0 ? (
-                          <Badge color="yellow">{c.unprocessed_count}</Badge>
+                          <Badge color="yellow">{c.unprocessed_count} unverarbeitet</Badge>
                         ) : (
                           <span className="text-gray-400">–</span>
                         )}
@@ -359,27 +374,22 @@ export default function AdminPage() {
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-2">
                           <button
-                            onClick={() => handleShowEpisodes(c)}
+                            onClick={() => loadEpisodes(c)}
                             className="rounded border border-gray-300 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50"
                           >
                             Episoden
                           </button>
                           <button
-                            onClick={() => handleIngest(c)}
-                            disabled={ingestLoading === c.id}
+                            onClick={() => handleFetch(c)}
+                            disabled={fetchLoading === c.id}
                             className="rounded bg-brand-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-brand-500 disabled:opacity-50"
                           >
-                            {ingestLoading === c.id ? "Läuft…" : "Ingest"}
+                            {fetchLoading === c.id ? "Lädt…" : "Fetch"}
                           </button>
                         </div>
-                        {result && (
-                          <p className="mt-1 text-right text-xs text-gray-500">
-                            +{result.new_episodes} Eps · +{result.recommendations_saved} Recs
-                            {result.errors.length > 0 && (
-                              <span className="text-red-500">
-                                {" "}· {result.errors.length} Fehler
-                              </span>
-                            )}
+                        {fr && (
+                          <p className={`mt-1 text-right text-xs ${fr.error ? "text-red-500" : "text-gray-500"}`}>
+                            {fr.error ? fr.error : `+${fr.new_episodes} neue Episoden`}
                           </p>
                         )}
                       </td>
@@ -393,22 +403,23 @@ export default function AdminPage() {
       </section>
 
       {/* ------------------------------------------------------------------ */}
-      {/* Episoden                                                             */}
+      {/* Schritt 2: Episoden + pro Episode verarbeiten                       */}
       {/* ------------------------------------------------------------------ */}
       {selectedCreator && (
         <section className="rounded-lg border bg-white">
           <div className="border-b px-6 py-4">
-            <h2 className="text-lg font-semibold text-gray-800">
+            <h2 className="text-base font-semibold text-gray-800">
               Episoden – {selectedCreator.name}
             </h2>
+            <p className="mt-0.5 text-xs text-gray-500">
+              Klicke &quot;Verarbeiten&quot; um Transkript + OpenAI für eine Episode zu starten (~15–40 s).
+            </p>
           </div>
           {loadingEpisodes ? (
-            <p className="px-6 py-8 text-center text-sm text-gray-400">
-              Lädt…
-            </p>
+            <p className="px-6 py-8 text-center text-sm text-gray-400">Lädt…</p>
           ) : episodes.length === 0 ? (
             <p className="px-6 py-8 text-center text-sm text-gray-400">
-              Keine Episoden. Starte Ingest.
+              Keine Episoden. Starte &quot;Fetch&quot; für diesen Creator.
             </p>
           ) : (
             <div className="overflow-x-auto">
@@ -423,34 +434,53 @@ export default function AdminPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {episodes.map((ep) => (
-                    <tr key={ep.id} className="hover:bg-gray-50">
-                      <td className="max-w-xs truncate px-4 py-3 font-medium text-gray-900">
-                        {ep.title}
-                      </td>
-                      <td className="px-4 py-3 text-gray-500">
-                        {ep.publish_date ?? "–"}
-                      </td>
-                      <td className="px-4 py-3">
-                        {ep.processed ? (
-                          <Badge color="green">Verarbeitet</Badge>
-                        ) : (
-                          <Badge color="yellow">Ausstehend</Badge>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-right text-gray-700">
-                        {ep.recommendation_count}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <button
-                          onClick={() => handleShowRecommendations(ep)}
-                          className="rounded border border-gray-300 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50"
-                        >
-                          Recommendations
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {episodes.map((ep) => {
+                    const pr = processResults[ep.id];
+                    return (
+                      <tr key={ep.id} className="hover:bg-gray-50">
+                        <td className="max-w-xs truncate px-4 py-3 font-medium text-gray-900">
+                          {ep.title}
+                        </td>
+                        <td className="px-4 py-3 text-gray-500">{ep.publish_date ?? "–"}</td>
+                        <td className="px-4 py-3">
+                          {ep.processed ? (
+                            <Badge color="green">Verarbeitet</Badge>
+                          ) : (
+                            <Badge color="yellow">Ausstehend</Badge>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right text-gray-700">
+                          {ep.recommendation_count}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-end gap-2">
+                            {ep.recommendation_count > 0 && (
+                              <button
+                                onClick={() => handleShowRecommendations(ep)}
+                                className="rounded border border-gray-300 px-2.5 py-1 text-xs text-gray-600 hover:bg-gray-50"
+                              >
+                                Anzeigen
+                              </button>
+                            )}
+                            {!ep.processed && (
+                              <button
+                                onClick={() => handleProcess(ep)}
+                                disabled={processLoading === ep.id}
+                                className="rounded bg-brand-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-brand-500 disabled:opacity-50"
+                              >
+                                {processLoading === ep.id ? "Läuft…" : "Verarbeiten"}
+                              </button>
+                            )}
+                          </div>
+                          {pr && (
+                            <p className={`mt-1 text-right text-xs ${pr.error ? "text-red-500" : "text-gray-500"}`}>
+                              {pr.error ? pr.error : `+${pr.recommendations_saved} Recs gespeichert`}
+                            </p>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -459,22 +489,16 @@ export default function AdminPage() {
       )}
 
       {/* ------------------------------------------------------------------ */}
-      {/* Recommendations                                                      */}
+      {/* Recommendations für eine Episode                                    */}
       {/* ------------------------------------------------------------------ */}
       {selectedEpisode && (
         <section className="rounded-lg border bg-white">
           <div className="border-b px-6 py-4">
-            <h2 className="text-lg font-semibold text-gray-800">
-              Recommendations
-            </h2>
-            <p className="mt-0.5 truncate text-sm text-gray-500">
-              {selectedEpisode.title}
-            </p>
+            <h2 className="text-base font-semibold text-gray-800">Recommendations</h2>
+            <p className="mt-0.5 truncate text-sm text-gray-500">{selectedEpisode.title}</p>
           </div>
           {loadingRecs ? (
-            <p className="px-6 py-8 text-center text-sm text-gray-400">
-              Lädt…
-            </p>
+            <p className="px-6 py-8 text-center text-sm text-gray-400">Lädt…</p>
           ) : recommendations.length === 0 ? (
             <p className="px-6 py-8 text-center text-sm text-gray-400">
               Keine Recommendations für diese Episode.
@@ -483,24 +507,20 @@ export default function AdminPage() {
             <div className="divide-y">
               {recommendations.map((rec) => (
                 <div key={rec.id} className="px-6 py-4">
-                  <div className="flex items-center gap-3">
-                    <span className="text-lg font-bold text-gray-900">
-                      {rec.ticker}
-                    </span>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="text-lg font-bold text-gray-900">{rec.ticker}</span>
                     {typeBadge(rec.type)}
                     {rec.company_name && (
-                      <span className="text-sm text-gray-500">
-                        {rec.company_name}
-                      </span>
+                      <span className="text-sm text-gray-500">{rec.company_name}</span>
                     )}
                     {rec.confidence !== null && (
                       <span className="ml-auto text-xs text-gray-400">
-                        Confidence: {(rec.confidence * 100).toFixed(0)}%
+                        {(rec.confidence * 100).toFixed(0)}% Konfidenz
                       </span>
                     )}
                   </div>
                   {rec.sentence && (
-                    <p className="mt-1.5 text-sm italic text-gray-600">
+                    <p className="mt-2 text-sm italic text-gray-600">
                       &ldquo;{rec.sentence}&rdquo;
                     </p>
                   )}
